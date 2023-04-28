@@ -52,10 +52,13 @@
 //! for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
 //! dual licensed as above, without any additional terms or conditions.
 
-use data_encoding::{BASE32HEX_NOPAD, BASE64URL_NOPAD};
+use data_encoding::{DecodeError, BASE32HEX_NOPAD, BASE64URL_NOPAD};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::time::SystemTime;
+use std::{
+    fmt::{self, Display},
+    time::SystemTime,
+};
 
 /// Re-export of KeyPair from the nkeys crate.
 ///
@@ -90,6 +93,128 @@ pub struct Claims {
     /// Time when the token expires (in seconds since the unix epoch)
     #[serde(rename = "exp", skip_serializing_if = "Option::is_none")]
     pub expires: Option<i64>,
+}
+
+impl Claims {
+    /// Decodes and verifies a JWT.
+    ///
+    /// The JWT is expected to:
+    /// - being composed by header, body and signature;
+    /// - have the `alg` parameter set to `ed25519-nkey`;
+    /// - have a body that can be deserialized as [`Claims`];
+    /// - have a valid signature.
+    pub fn from_jwt(jwt: &str) -> Result<Self, InvalidClaimsJwt> {
+        #[derive(Debug, Deserialize)]
+        struct Header {
+            typ: String,
+            alg: String,
+        }
+
+        let (jwt_half, b64_sig) = jwt
+            .rsplit_once('.')
+            .ok_or(InvalidClaimsJwt::MissingSignature)?;
+
+        let (b64_header, b64_body) = jwt_half
+            .rsplit_once('.')
+            .ok_or(InvalidClaimsJwt::MissingHeaderBodyDelimiter)?;
+
+        let b64_decoded_header = BASE64URL_NOPAD
+            .decode(b64_header.as_bytes())
+            .map_err(InvalidClaimsJwt::HeaderEncoding)?;
+        let header: Header =
+            serde_json::from_slice(&b64_decoded_header).map_err(InvalidClaimsJwt::HeaderJson)?;
+        if &header.typ != "JWT" || &header.alg != "ed25519-nkey" {
+            return Err(InvalidClaimsJwt::Header);
+        }
+
+        let sig = BASE64URL_NOPAD
+            .decode(b64_sig.as_bytes())
+            .map_err(InvalidClaimsJwt::SignatureDecode)?;
+
+        let decoded_claims = BASE64URL_NOPAD
+            .decode(b64_body.as_bytes())
+            .map_err(InvalidClaimsJwt::BodyEncoding)?;
+
+        let claims: Claims =
+            serde_json::from_slice(&decoded_claims).map_err(InvalidClaimsJwt::BodyJson)?;
+
+        let verify_key =
+            KeyPair::from_public_key(&claims.issuer).map_err(InvalidClaimsJwt::Issuer)?;
+        verify_key
+            .verify(jwt_half.as_bytes(), &sig)
+            .map_err(InvalidClaimsJwt::Signature)?;
+
+        Ok(claims)
+    }
+}
+
+/// The possible errors that can be returned by [`Claims::from_jwt`].
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum InvalidClaimsJwt {
+    /// Missing signature.
+    MissingSignature,
+
+    /// Cannot decode signature.
+    SignatureDecode(DecodeError),
+
+    /// Delimiter between header and body is missing.
+    MissingHeaderBodyDelimiter,
+
+    /// Cannot decode header.
+    HeaderEncoding(DecodeError),
+
+    /// Cannot deserialize header.
+    HeaderJson(serde_json::Error),
+
+    /// Invalid header content.
+    Header,
+
+    /// Cannot decode body.
+    BodyEncoding(DecodeError),
+
+    /// Cannot deserialize body.
+    BodyJson(serde_json::Error),
+
+    /// Invalid issuer.
+    Issuer(nkeys::error::Error),
+
+    /// Invalid signature.
+    Signature(nkeys::error::Error),
+}
+
+impl Display for InvalidClaimsJwt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::MissingSignature => "JWT is malformed, it does not contain the signature",
+            Self::SignatureDecode(_) => "unable to decode JWT signature",
+            Self::MissingHeaderBodyDelimiter => {
+                "JWT is malformed, it does not contain the delimiter between header and body"
+            }
+            Self::HeaderEncoding(_) => "unable to decode JWT header",
+            Self::HeaderJson(_) => "JWT header contains invalid JSON data",
+            Self::Header => "JWT is not a valid ed25519-nkey JWT",
+            Self::BodyEncoding(_) => "unable to decode JWT body",
+            Self::BodyJson(_) => "JWT body contains invalid JSON data",
+            Self::Issuer(_) => "JWT issuer is not valid",
+            Self::Signature(_) => "JWT contains an invalid signature",
+        };
+
+        f.write_str(s)
+    }
+}
+
+impl std::error::Error for InvalidClaimsJwt {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::MissingSignature | Self::MissingHeaderBodyDelimiter | Self::Header => None,
+            Self::SignatureDecode(err) | Self::HeaderEncoding(err) | Self::BodyEncoding(err) => {
+                Some(err)
+            }
+            Self::HeaderJson(err) | Self::BodyJson(err) => Some(err),
+            Self::Issuer(err) | Self::Signature(err) => Some(err),
+        }
+    }
 }
 
 /// NATS claims describing settings for the user or account
@@ -504,5 +629,44 @@ impl Token<Account> {
     pub fn allow_wildcards(mut self, allow_wildcards: bool) -> Self {
         self.kind.allow_wildcards = allow_wildcards;
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_claims() {
+        const JWT: &str = "eyJ0eXAiOiJKV1QiLCJhbGciOiJlZDI1NTE5LW5rZXkifQ.eyJpYXQiOjQ1Njc4LCJpc3MiOiJVQ1lMTlRDUkFQNVg1TlE1M0lMQkFFTElTSU5JRUZBUks1QU9XSlMzWDZSVE5JSk1BS0lENFpWSyIsImp0aSI6IkpXVCBkdW1teSBpZCIsInN1YiI6IlN1YmplY3QgSUQiLCJuYW1lIjoiQ2xhaW0gSUQiLCJuYXRzIjp7InR5cGUiOiJ1c2VyIiwicHViIjp7ImFsbG93IjpbInB1Yl9hbGxvdzEiLCJwdWJfYWxsb3cyIl0sImRlbnkiOlsicHViX2RlbnkxIiwicHViX2RlbnkyIl19LCJzdWIiOnsiYWxsb3ciOlsic3ViX2FsbG93MSIsInN1Yl9hbGxvdzIiXSwiZGVueSI6WyJzdWJfZGVueTEiLCJzdWJfZGVueTIiXX0sImlzc3Vlcl9hY2NvdW50IjoiSXNzdWVyIGFjY291bnQiLCJzdWJzIjoxMCwiZGF0YSI6MTIzNCwicGF5bG9hZCI6NTY3OCwiYmVhcmVyX3Rva2VuIjpmYWxzZSwidmVyc2lvbiI6MjJ9LCJleHAiOjkxMjM0fQ.aonx9VQFNs7Q-Td6zrRNNSGdyvQUcIqDQNmezT7Rsf9THY9gEJK8oTwprHyWafVBJ3DOM8oBLTw6wNZLDQ7-BA";
+
+        let expected_claims = Claims {
+            issued_at: 45678,
+            issuer: "UCYLNTCRAP5X5NQ53ILBAELISINIEFARK5AOWJS3X6RTNIJMAKID4ZVK".to_string(),
+            jwt_id: "JWT dummy id".to_string(),
+            sub: "Subject ID".to_string(),
+            name: "Claim ID".to_string(),
+            nats: NatsClaims::User {
+                permissions: NatsPermissionsMap {
+                    publish: NatsPermissions {
+                        allow: vec!["pub_allow1".to_string(), "pub_allow2".to_string()],
+                        deny: vec!["pub_deny1".to_string(), "pub_deny2".to_string()],
+                    },
+                    subscribe: NatsPermissions {
+                        allow: vec!["sub_allow1".to_string(), "sub_allow2".to_string()],
+                        deny: vec!["sub_deny1".to_string(), "sub_deny2".to_string()],
+                    },
+                },
+                issuer_account: "Issuer account".to_string(),
+                subs: 10,
+                data: 1234,
+                payload: 5678,
+                bearer_token: false,
+                version: 22,
+            },
+            expires: Some(91234),
+        };
+
+        assert_eq!(Claims::from_jwt(JWT).unwrap(), expected_claims);
     }
 }
