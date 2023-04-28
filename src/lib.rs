@@ -103,6 +103,7 @@ pub enum NatsClaims {
         permissions: NatsPermissionsMap,
 
         /// Public key/id of the account that issued the JWT
+        #[serde(default, skip_serializing_if = "str::is_empty")]
         issuer_account: String,
 
         /// Maximum nuber of subscriptions the user can have
@@ -116,6 +117,7 @@ pub enum NatsClaims {
 
         /// If true, the user isn't challenged on connection. Typically used for websocket
         /// connections as the browser won't have/want to have the user's private key.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         bearer_token: bool,
 
         /// Version of the nats claims object, always 2 in this crate
@@ -127,7 +129,7 @@ pub enum NatsClaims {
         limits: NatsAccountLimits,
 
         /// List of signing keys (public key) this account uses
-        #[serde(skip_serializing_if = "Vec::is_empty")]
+        #[serde(skip_serializing_if = "Vec::is_empty", default)]
         signing_keys: Vec<String>,
 
         /// Default publish and subscribe permissions users under this account will have if not
@@ -143,11 +145,11 @@ pub enum NatsClaims {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub struct NatsPermissions {
     /// List of subject patterns that are allowed
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub allow: Vec<String>,
 
     /// List of subject patterns that are denied
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub deny: Vec<String>,
 }
 
