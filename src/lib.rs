@@ -64,7 +64,7 @@ pub use nkeys::KeyPair;
 const JWT_HEADER: &str = r#"{"typ":"JWT","alg":"ed25519-nkey"}"#;
 
 /// JWT claims for NATS compatible jwts
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Claims {
     /// Time when the token was issued in seconds since the unix epoch
     #[serde(rename = "iat")]
@@ -93,7 +93,7 @@ pub struct Claims {
 }
 
 /// NATS claims describing settings for the user or account
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum NatsClaims {
     /// Claims for NATS users
@@ -140,7 +140,7 @@ pub enum NatsClaims {
 }
 
 /// List of subjects that are allowed and/or denied
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub struct NatsPermissions {
     /// List of subject patterns that are allowed
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -152,7 +152,7 @@ pub struct NatsPermissions {
 }
 
 /// Publish and subcribe permissons
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub struct NatsPermissionsMap {
     /// Permissions for which sujects can be published to
     #[serde(rename = "pub")]
@@ -164,7 +164,7 @@ pub struct NatsPermissionsMap {
 }
 
 /// Limits on what an account or users in the account can do
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NatsAccountLimits {
     /// Maximum nuber of subscriptions the account
     pub subs: i64,
