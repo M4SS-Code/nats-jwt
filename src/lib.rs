@@ -55,7 +55,7 @@
 use data_encoding::{BASE32HEX_NOPAD, BASE64URL_NOPAD};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 /// Re-export of KeyPair from the nkeys crate.
 ///
@@ -102,21 +102,18 @@ pub enum NatsClaims {
         #[serde(flatten)]
         permissions: NatsPermissionsMap,
 
+        #[serde(flatten)]
+        limits: Limits,
+
         /// Public key/id of the account that issued the JWT
         issuer_account: String,
-
-        /// Maximum nuber of subscriptions the user can have
-        subs: i64,
-
-        /// Maximum size of the message data the user can send in bytes
-        data: i64,
-
-        /// Maximum size of the entire message payload the user can send in bytes
-        payload: i64,
 
         /// If true, the user isn't challenged on connection. Typically used for websocket
         /// connections as the browser won't have/want to have the user's private key.
         bearer_token: bool,
+
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tags: Vec<String>,
 
         /// Version of the nats claims object, always 2 in this crate
         version: i64,
@@ -136,6 +133,22 @@ pub enum NatsClaims {
 
         /// Version of the nats claims object, always 2 in this crate
         version: i64,
+
+        imports: Imports,
+
+        exports: Exports,
+
+        revocations: Revocations,
+
+        mappings: Mappings,
+
+        authorization: Authorization,
+
+        description: String,
+
+        info_url: String,
+
+        tags: TagList,
     },
 }
 
@@ -168,6 +181,9 @@ pub struct NatsPermissionsMap {
     /// Permissions for which subjects can be subscribed to
     #[serde(rename = "sub", skip_serializing_if = "NatsPermissions::is_empty")]
     pub subscribe: NatsPermissions,
+
+    #[serde(rename = "resp")]
+    pub response: Option<ResponsePermission>,
 }
 
 /// Limits on what an account or users in the account can do
@@ -196,6 +212,15 @@ pub struct NatsAccountLimits {
 
     /// Maximum number of leaf node connections
     pub leaf: i64,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ResponsePermission {
+    #[serde(rename = "max")]
+    pub max_messages: i64,
+
+    #[serde(with = "duration_nanos")]
+    pub ttl: Duration,
 }
 
 /// Nats claims shared by user and accounts
@@ -509,5 +534,85 @@ impl Token<Account> {
     pub fn allow_wildcards(mut self, allow_wildcards: bool) -> Self {
         self.kind.allow_wildcards = allow_wildcards;
         self
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Limits {
+    #[serde(flatten)]
+    pub user: UserLimits,
+
+    #[serde(flatten)]
+    pub nats: NatsLimits,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct UserLimits {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    src: Vec<String>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    times: Vec<TimeRange>,
+
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    times_location: String,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TimeRange {
+    pub start: String,
+
+    pub end: String,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct NatsLimits {
+    /// Maximum nuber of subscriptions
+    #[serde(default = "minus_one")]
+    pub subs: i64,
+
+    /// Maximum size of the message data that can be sent, in bytes
+    #[serde(default = "minus_one")]
+    pub data: i64,
+
+    /// Maximum size of the entire message payload that can be sent, in bytes
+    #[serde(default = "minus_one")]
+    pub payload: i64,
+}
+
+pub const fn minus_one() -> i64 {
+    -1
+}
+
+mod duration_nanos {
+    use std::{convert::TryInto, time::Duration};
+
+    use serde::{de, Deserialize, Deserializer, Serializer};
+
+    pub(crate) fn serialize<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let nanos: i64 = duration
+            .as_nanos()
+            .try_into()
+            .map_err(|_| serde::ser::Error::custom("duration cannot be represented as i64"))?;
+
+        serde::Serialize::serialize(&nanos, serializer)
+    }
+
+    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Nanos(i64);
+
+        let Nanos(nanos) = Nanos::deserialize(deserializer)?;
+        let nanos = nanos
+            .try_into()
+            .map_err(|_| de::Error::custom("duration nanoseconds must be a positive value"))?;
+
+        Ok(Duration::from_nanos(nanos))
     }
 }
