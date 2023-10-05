@@ -52,6 +52,8 @@
 //! for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
 //! dual licensed as above, without any additional terms or conditions.
 
+pub mod claims;
+
 use data_encoding::{BASE32HEX_NOPAD, BASE64URL_NOPAD};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -87,7 +89,6 @@ pub struct Claims {
     /// NATS claims
     pub nats: NatsClaims,
 
-    /// Time when the token expires (in seconds since the unix epoch)
     #[serde(rename = "exp", skip_serializing_if = "Option::is_none")]
     pub expires: Option<i64>,
 }
@@ -97,59 +98,61 @@ pub struct Claims {
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum NatsClaims {
     /// Claims for NATS users
-    User {
-        /// Publish and subscribe permissions for the user
-        #[serde(flatten)]
-        permissions: NatsPermissionsMap,
+    User(claims::User),
+    // User {
+    //     /// Publish and subscribe permissions for the user
+    //     #[serde(flatten)]
+    //     permissions: NatsPermissionsMap,
 
-        #[serde(flatten)]
-        limits: Limits,
+    //     #[serde(flatten)]
+    //     limits: Limits,
 
-        /// Public key/id of the account that issued the JWT
-        issuer_account: String,
+    //     /// Public key/id of the account that issued the JWT
+    //     issuer_account: String,
 
-        /// If true, the user isn't challenged on connection. Typically used for websocket
-        /// connections as the browser won't have/want to have the user's private key.
-        bearer_token: bool,
+    //     /// If true, the user isn't challenged on connection. Typically used for websocket
+    //     /// connections as the browser won't have/want to have the user's private key.
+    //     bearer_token: bool,
 
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        tags: Vec<String>,
+    //     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    //     tags: Vec<String>,
 
-        /// Version of the nats claims object, always 2 in this crate
-        version: i64,
-    },
+    //     /// Version of the nats claims object, always 2 in this crate
+    //     version: i64,
+    // },
     /// Claims for NATS accounts
-    Account {
-        /// Configuration for the limits for this account
-        limits: NatsAccountLimits,
+    Account(claims::Account),
+    // Account {
+    //     /// Configuration for the limits for this account
+    //     limits: NatsAccountLimits,
 
-        /// List of signing keys (public key) this account uses
-        #[serde(skip_serializing_if = "Vec::is_empty")]
-        signing_keys: Vec<String>,
+    //     /// List of signing keys (public key) this account uses
+    //     #[serde(skip_serializing_if = "Vec::is_empty")]
+    //     signing_keys: Vec<String>,
 
-        /// Default publish and subscribe permissions users under this account will have if not
-        /// specified otherwise
-        default_permissions: NatsPermissionsMap,
+    //     /// Default publish and subscribe permissions users under this account will have if not
+    //     /// specified otherwise
+    //     default_permissions: NatsPermissionsMap,
 
-        /// Version of the nats claims object, always 2 in this crate
-        version: i64,
+    //     /// Version of the nats claims object, always 2 in this crate
+    //     version: i64,
 
-        imports: Imports,
+    //     imports: Imports,
 
-        exports: Exports,
+    //     exports: Exports,
 
-        revocations: Revocations,
+    //     revocations: Revocations,
 
-        mappings: Mappings,
+    //     mappings: Mappings,
 
-        authorization: Authorization,
+    //     authorization: Authorization,
 
-        description: String,
+    //     description: String,
 
-        info_url: String,
+    //     info_url: String,
 
-        tags: TagList,
-    },
+    //     tags: TagList,
+    // },
 }
 
 /// List of subjects that are allowed and/or denied
